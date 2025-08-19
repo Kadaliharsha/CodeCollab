@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeCollab Room</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        /* Simple spinner for loading indicator */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen p-4">
+
+    <div class="w-full max-w-6xl h-full flex flex-col bg-gray-800 rounded-lg shadow-xl p-6">
+        <div class="mb-4">
+            <h1 class="text-2xl font-bold">CodeCollab Room</h1>
+            <p class="text-gray-400">Room ID: <span id="roomIdDisplay" class="font-mono bg-gray-700 px-2 py-1 rounded"></span></p>
+            <p id="status" class="text-green-400">Connecting...</p>
+        </div>
+        
+        <div class="flex-grow flex flex-col md:flex-row gap-4 h-[calc(100%-100px)]">
+            <!-- Editor Panel -->
+            <div class="w-full md:w-1/2 h-full flex flex-col">
+                <textarea id="editor" class="w-full flex-grow bg-gray-900 text-green-300 font-mono p-4 rounded-md border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+            </div>
+
+            <!-- Output Panel -->
+            <div class="w-full md:w-1/2 h-full flex flex-col">
+                <div class="flex items-center mb-2">
+                    <button id="runBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-play-fill" viewBox="0 0 16 16">
+                            <path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/>
+                        </svg>
+                        Run Code
+                    </button>
+                    <div id="loader" class="loader ml-4 hidden"></div>
+                </div>
+                <pre id="output" class="w-full flex-grow bg-black text-white font-mono p-4 rounded-md border border-gray-700 overflow-auto whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const roomId = window.location.pathname.split('/').pop();
+        document.getElementById('roomIdDisplay').textContent = roomId;
+        const username = prompt("Please enter your username:", "Guest");
+        const socket = io("http://127.0.0.1:5001");
+
+        const editor = document.getElementById('editor');
+        const statusEl = document.getElementById('status');
+        const runBtn = document.getElementById('runBtn');
+        const outputEl = document.getElementById('output');
+        const loader = document.getElementById('loader');
+
+        // --- WebSocket Event Listeners ---
+        socket.on('connect', () => {
+            statusEl.textContent = 'Connected!';
+            statusEl.className = 'text-green-400';
+            socket.emit('join_room', { room_id: roomId, username: username });
+
+            // FIXED: Use the full, absolute URL for the fetch request
+            fetch(`http://127.0.0.1:5001/api/rooms/${roomId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.code_content) {
+                        editor.value = data.code_content;
+                    }
+                });
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = 'Disconnected!';
+            statusEl.className = 'text-red-400';
+        });
+
+        socket.on('user_joined', (data) => {
+            console.log(`${data.username} has joined the room.`);
+        });
+
+        socket.on('code_updated', (data) => {
+            const cursorPos = editor.selectionStart;
+            editor.value = data.code;
+            editor.selectionEnd = cursorPos;
+        });
+
+        // V-- NEW: Listen for the execution result from the server --V
+        socket.on('execution_result', (result) => {
+            if (result.error) {
+                outputEl.textContent = result.error;
+                outputEl.style.color = '#f87171'; // red-400
+            } else {
+                outputEl.textContent = result.output;
+                outputEl.style.color = 'white';
+            }
+            loader.classList.add('hidden');
+            runBtn.disabled = false;
+        });
+
+        // --- Editor & Button Event Listeners ---
+        editor.addEventListener('keyup', () => {
+            const currentCode = editor.value;
+            socket.emit('code_change', {
+                room_id: roomId,
+                code: currentCode
+            });
+        });
+
+        // V-- UPDATED: The button now emits a WebSocket event --V
+        runBtn.addEventListener('click', () => {
+            outputEl.textContent = 'Executing...';
+            loader.classList.remove('hidden');
+            runBtn.disabled = true;
+            
+            // Tell the server to execute the code for this room
+            socket.emit('execute_code', { room_id: roomId });
+        });
+
+    </script>
+</body>
+</html>
