@@ -1,12 +1,14 @@
 import docker
 from docker.errors import ContainerError
+import time
 
-def run_python_code(code_string):
+def run_python_code(user_code, test_input):
     """
     Runs a string of Python code in a secure, isolated Docker container.
     
     Args:
-        code_string (str): The Python code to execute.
+        user_code (str): The user's Python code, expected to be a function definition.
+        test_string (str): The input to pass to the user's function.
         
     Returns:
         A tuple containing (output, error), both as strings.
@@ -17,13 +19,24 @@ def run_python_code(code_string):
     
     # Command to run inside the container. We're telling it it execute our code string.
     # The '-c' flag tells python to execute the command that follows.
-    command = ["python", "-c", code_string]
-    
+    client = docker.from_env()
+    image_name = "python:3.9-slim"
+
+    full_script = f"""
+# --- User's Code ---    
+{user_code}    
+
+# --- Execution ---
+# We call the 'solve' function with the provided input
+try:
+    result = solve({test_input})
+    print(result)
+except Exception as e:
+    print(e)
+"""
+    command = ["python", "-c", full_script]
     container = None
     try:
-        # Ensure the base image is available
-        client.images.pull(image_name)
-
         # 1. Create the container
         container = client.containers.create(
             image=image_name,

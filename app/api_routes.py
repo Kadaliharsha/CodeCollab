@@ -1,10 +1,11 @@
 import uuid
 from flask import Blueprint, request, jsonify
 from app import db, socketio
-from app.models import User, Room
+from app.models import User, Room, Problem, TestCase
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from flask_socketio import join_room, emit
 from app.code_executor import run_python_code
+from sqlalchemy.orm import joinedload
 
 # Create a Blueprint
 bp = Blueprint('api', __name__, url_prefix='/api')
@@ -68,15 +69,24 @@ def create_room():
 
 @bp.route('/rooms/<string:room_id>', methods=['GET'])
 def get_room(room_id):
-    room = Room.query.get(room_id)
-    if room:
-        return jsonify({
-            "id": room.id,
-            "code_content": room.code_content,
-            "created_by": room.created_by
-        }), 200
-    else:
+    room = Room.query.options(joinedload(Room.problem)).get(room_id)
+    if not room:
         return jsonify({"error": "Room not found"}), 404
+    
+    problem_details = {}
+    if room.problem:
+        problem_details = {
+            "title": room.problem.title,
+            "description": room.problem.description,
+            "template_code": room.problem.template_code
+        }
+        
+    return jsonify({
+        "id": room.id,
+        "code_content": room.code_content,
+        "created_by": room.created_by,
+        "problem": problem_details
+    }), 200
 
 # -- code execution ---
 
@@ -155,11 +165,13 @@ def handle_code_change(data):
 def handle_execute_code(data):
     """Handles a request to execute code and broadcasts the result."""
     room_id = data.get('room_id')
+    custom_input = data.get('input', '')
     room = Room.query.get(room_id)
     if not room:
         return
     
-    output, error = run_python_code(room.code_content)
+    code_to_run = room.code_content
+    output, error = run_python_code(code_to_run, custom_input)
     
     result = {
         "output": output,
@@ -169,6 +181,51 @@ def handle_execute_code(data):
     # Broadcast the result to EVERYONE in the room
     emit('execution_result', result, to=room_id)
     
+@socketio.on('submit_code')
+def handle_submit_code(data):
+    """
+    Handles a code submission, runs it against all test cases,
+    and broadcasts the final verdict.
+    """
+    room_id = data.get('room_id')
+    room = Room.query.get(room_id)
+    if not room or not room.problem_id:
+        emit('submit_result', {'verdict': 'Error', 'details': 'No problem associated with this room.'}, to=room_id)
+        return
+
+    problem = Problem.query.get(room.problem_id)
+    if not problem or not problem.test_cases:
+        emit('submit_result', {'verdict': 'Error', 'details': 'Could not find test cases for this problem.'}, to=room_id)
+        return
+
+    user_code = room.code_content
+    passed_all_tests = True
+
+    for i, test_case in enumerate(problem.test_cases):
+        # Run the user's code with the test case's input
+        actual_output, error = run_python_code(user_code, test_case.input_data)
+
+        # Check for runtime errors
+        if error:
+            verdict = "Runtime Error"
+            details = f"Test Case #{i+1} failed with an error:\n{error}"
+            passed_all_tests = False
+            break # Stop testing if one case fails
+
+        # Compare the actual output with the expected output
+        # We strip whitespace to be more lenient with formatting
+        if actual_output.strip() != test_case.expected_output.strip():
+            verdict = "Wrong Answer"
+            details = f"Test Case #{i+1} failed.\nExpected: {test_case.expected_output}\nGot: {actual_output}"
+            passed_all_tests = False
+            break # Stop testing if one case fails
+
+    if passed_all_tests:
+        verdict = "Accepted"
+        details = f"Congratulations! You passed all {len(problem.test_cases)} test cases."
+    # Broadcast the final result to everyone in the room
+    emit('submit_result', {'verdict': verdict, 'details': details}, to=room_id)
+
 # ## --- Frontend route ---
 # @bp.route('/room/string:room_id>')
 # def room_page(room_id):

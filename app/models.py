@@ -18,3 +18,25 @@ class Room(db.Model):
     id = db.Column(db.String(10), primary_key=True)
     code_content = db.Column(db.Text, nullable=True, default="# Welcome to your CodeCollab room\n print('Hello,friend!')")
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    # Optional association to a problem for this room
+    problem_id = db.Column(db.Integer, db.ForeignKey('problem.id'), nullable=True)
+    problem = db.relationship('Problem', backref='rooms', lazy=True)
+    
+class Problem(db.Model):
+    """Represents a coding Problem"""
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    template_code = db.Column(db.Text, nullable=True)
+
+    test_cases = db.relationship('TestCase', backref='problem', lazy=True, cascade="all, delete-orphan")
+    
+class TestCase(db.Model):
+    """Reperesents a single test case for a Problem"""
+    
+    id = db.Column(db.Integer, primary_key=True)
+    input_data = db.Column(db.Text, nullable=False)
+    expected_output = db.Column(db.Text, nullable=False)
+    is_hidden = db.Column(db.Boolean, default=True, nullable=False)
+    
+    problem_id = db.Column(db.Integer, db.ForeignKey('problem.id'), nullable=False)
