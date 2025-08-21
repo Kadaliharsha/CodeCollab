@@ -4,7 +4,7 @@ from app import db, socketio
 from app.models import User, Room, Problem, TestCase
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from flask_socketio import join_room, emit
-from app.code_executor import run_python_code
+from app.code_executor import run_code
 from sqlalchemy.orm import joinedload
 
 # Create a Blueprint
@@ -54,32 +54,34 @@ def login_user():
 def create_room():
     # Get the user ID from the JWT token
     current_user_id = get_jwt_identity()
-    try:
-        creator_id = int(current_user_id)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Invalid user identity"}), 400
+    # try:
+    #     creator_id = int(current_user_id)
+    # except (TypeError, ValueError):
+    #     return jsonify({"error": "Invalid user identity"}), 400
 
     room_id = generate_room_id()
     new_room = Room()
     new_room.id = room_id
-    new_room.created_by = creator_id
+    new_room.created_by = current_user_id
     db.session.add(new_room)
     db.session.commit()
     return jsonify({"message": "Room created", "room_id": room_id}), 201
 
 @bp.route('/rooms/<string:room_id>', methods=['GET'])
 def get_room(room_id):
-    room = Room.query.options(joinedload(Room.problem)).get(room_id)
+    room = Room.query.get(room_id)
     if not room:
         return jsonify({"error": "Room not found"}), 404
     
     problem_details = {}
-    if room.problem:
-        problem_details = {
-            "title": room.problem.title,
-            "description": room.problem.description,
-            "template_code": room.problem.template_code
-        }
+    if room.problem_id:
+        problem = Problem.query.get(room.problem_id)
+        if problem:
+            problem_details = {
+                "title": problem.title,
+                "description": problem.description,
+                "template_code": problem.template_code
+            }
         
     return jsonify({
         "id": room.id,
@@ -87,6 +89,12 @@ def get_room(room_id):
         "created_by": room.created_by,
         "problem": problem_details
     }), 200
+
+@bp.route('/problems', methods=['GET'])
+def get_problems():
+    problems = Problem.query.all()
+    problem_list =[{"id": p.id, "title": p.title} for p in problems]
+    return jsonify(problem_list), 200
 
 # -- code execution ---
 
@@ -166,12 +174,21 @@ def handle_execute_code(data):
     """Handles a request to execute code and broadcasts the result."""
     room_id = data.get('room_id')
     custom_input = data.get('input', '')
+    language = data.get('language','python')
+    
     room = Room.query.get(room_id)
     if not room:
         return
     
     code_to_run = room.code_content
-    output, error = run_python_code(code_to_run, custom_input)
+    output, error = run_code(code_to_run, language, custom_input)
+    # Log for debugging
+    try:
+        print(f"[execute_code] room={room_id} language={language} output=\n{output}")
+        if error:
+            print(f"[execute_code][ERROR] room={room_id} language={language} error=\n{error}")
+    except Exception:
+        pass
     
     result = {
         "output": output,
@@ -180,6 +197,15 @@ def handle_execute_code(data):
     
     # Broadcast the result to EVERYONE in the room
     emit('execution_result', result, to=room_id)
+
+@socketio.on('language_changed')
+def handle_language_changed(data):
+    """Broadcast language change to all other clients in the room."""
+    room_id = data.get('room_id')
+    language = data.get('language', 'python')
+    if not room_id:
+        return
+    emit('language_updated', { 'language': language }, to=room_id, include_self=False)
     
 @socketio.on('submit_code')
 def handle_submit_code(data):
@@ -188,6 +214,8 @@ def handle_submit_code(data):
     and broadcasts the final verdict.
     """
     room_id = data.get('room_id')
+    language = data.get('language', 'python')
+    
     room = Room.query.get(room_id)
     if not room or not room.problem_id:
         emit('submit_result', {'verdict': 'Error', 'details': 'No problem associated with this room.'}, to=room_id)
@@ -200,10 +228,12 @@ def handle_submit_code(data):
 
     user_code = room.code_content
     passed_all_tests = True
+    verdict = ""
+    details = ""
 
     for i, test_case in enumerate(problem.test_cases):
         # Run the user's code with the test case's input
-        actual_output, error = run_python_code(user_code, test_case.input_data)
+        actual_output, error = run_code(user_code, language, test_case.input_data)
 
         # Check for runtime errors
         if error:

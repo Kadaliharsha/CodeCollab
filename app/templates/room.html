@@ -6,8 +6,21 @@
     <title>CodeCollab Room</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    
+    <!-- NEW: Import CodeMirror for the editor -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/dracula.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/clike/clike.min.js"></script>
+
     <style>
         body { font-family: 'Inter', sans-serif; }
+        /* Make CodeMirror editor fill its container */
+        .CodeMirror {
+            height: 100%;
+            font-size: 16px;
+        }
         .loader {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #3498db;
@@ -34,14 +47,24 @@
         <div class="flex-grow grid grid-cols-1 md:grid-cols-12 gap-4 h-[calc(100%-100px)]">
             <!-- Problem Panel (Left) -->
             <div class="md:col-span-4 h-full flex flex-col bg-gray-900 p-4 rounded-md">
-                <h2 id="problemTitle" class="text-xl font-bold mb-2">Loading Problem...</h2>
-                <div id="problemDescription" class="text-gray-300 overflow-y-auto"></div>
+                <h2 id="problemTitle" class="text-xl font-bold mb-2">Open Sandbox</h2>
+                <div id="problemDescription" class="text-gray-300 overflow-y-auto">Feel free to write and test any code.</div>
             </div>
 
             <!-- Editor & Output Panel (Right) -->
             <div class="md:col-span-8 h-full flex flex-col gap-4">
                 <div class="h-3/5 flex flex-col">
-                    <textarea id="editor" class="w-full flex-grow bg-gray-900 text-green-300 font-mono p-4 rounded-md border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"></textarea>
+                    <!-- NEW: Language Selector -->
+                    <div class="mb-2">
+                        <label for="languageSelector" class="text-sm font-medium text-gray-400 mr-2">Language:</label>
+                        <select id="languageSelector" class="bg-gray-700 text-white rounded-md px-2 py-1">
+                            <option value="python">Python</option>
+                            <option value="cpp">C++</option>
+                            <option value="java">Java</option>
+                        </select>
+                    </div>
+                    <!-- UPDATED: This textarea will be replaced by CodeMirror -->
+                    <textarea id="editor" class="w-full flex-grow"></textarea>
                 </div>
                 <div class="h-2/5 flex flex-col">
                     <div class="flex items-center mb-2 gap-4">
@@ -56,13 +79,16 @@
     </div>
 
     <script>
-        const roomId = window.location.pathname.split('/').pop();
+        // FIXED: Ensure we only take the first 8 characters for the room ID
+        const pathSegments = window.location.pathname.split('/');
+        const rawRoomId = pathSegments.pop() || pathSegments.pop(); // Handles trailing slashes
+        const roomId = rawRoomId.substring(0, 8);
+
         document.getElementById('roomIdDisplay').textContent = roomId;
         const username = prompt("Please enter your username:", "Guest");
         const socket = io("http://127.0.0.1:5001");
 
         // DOM Elements
-        const editor = document.getElementById('editor');
         const statusEl = document.getElementById('status');
         const runBtn = document.getElementById('runBtn');
         const submitBtn = document.getElementById('submitBtn');
@@ -70,6 +96,15 @@
         const loader = document.getElementById('loader');
         const problemTitleEl = document.getElementById('problemTitle');
         const problemDescriptionEl = document.getElementById('problemDescription');
+        const languageSelector = document.getElementById('languageSelector');
+
+        // --- NEW: Initialize CodeMirror Editor ---
+        const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+            lineNumbers: true,
+            mode: "python", // Default mode
+            theme: "dracula",
+            indentUnit: 4,
+        });
 
         // --- WebSocket Event Listeners ---
         socket.on('connect', () => {
@@ -77,15 +112,15 @@
             statusEl.className = 'text-green-400';
             socket.emit('join_room', { room_id: roomId, username: username });
 
-            fetch(`/api/rooms/${roomId}`)
+            fetch(`http://127.0.0.1:5001/api/rooms/${roomId}`)
                 .then(response => response.json())
                 .then(data => {
-                    // Populate problem details
                     if (data.problem && data.problem.title) {
                         problemTitleEl.textContent = data.problem.title;
                         problemDescriptionEl.textContent = data.problem.description;
-                        // Use template code if editor is empty, otherwise use saved code
-                        editor.value = data.code_content || data.problem.template_code;
+                        editor.setValue(data.code_content || data.problem.template_code);
+                    } else {
+                        editor.setValue(data.code_content || "print('Hello, world!')");
                     }
                 });
         });
@@ -94,9 +129,9 @@
         socket.on('user_joined', (data) => { console.log(`${data.username} has joined the room.`); });
 
         socket.on('code_updated', (data) => {
-            const cursorPos = editor.selectionStart;
-            editor.value = data.code;
-            editor.selectionEnd = cursorPos;
+            const cursorPos = editor.getCursor();
+            editor.setValue(data.code);
+            editor.setCursor(cursorPos);
         });
 
         socket.on('execution_result', (result) => {
@@ -112,42 +147,60 @@
             submitBtn.disabled = false;
         });
         
-        // V-- NEW: Listen for the final submission verdict --V
         socket.on('submit_result', (result) => {
             outputEl.textContent = `Verdict: ${result.verdict}\n\n${result.details}`;
             if (result.verdict === 'Accepted') {
-                outputEl.style.color = '#4ade80'; // green-400
+                outputEl.style.color = '#4ade80';
             } else {
-                outputEl.style.color = '#f87171'; // red-400
+                outputEl.style.color = '#f87171';
             }
             loader.classList.add('hidden');
             runBtn.disabled = false;
             submitBtn.disabled = false;
         });
 
-
         // --- Event Listeners ---
-        editor.addEventListener('keyup', () => {
-            socket.emit('code_change', { room_id: roomId, code: editor.value });
+        editor.on('change', (instance, changeObj) => {
+            // Prevent broadcasting changes that come from other users
+            if (changeObj.origin !== 'setValue') {
+                socket.emit('code_change', { room_id: roomId, code: instance.getValue() });
+            }
+        });
+
+        // NEW: Change editor mode when language changes
+        languageSelector.addEventListener('change', (event) => {
+            const lang = event.target.value;
+            console.log(`Language selector changed to: ${lang}`); // For debugging
+            let mode = "python";
+            if (lang === 'cpp') mode = "text/x-c++src";
+            if (lang === 'java') mode = "text/x-java";
+            editor.setOption("mode", mode);
+            console.log(`CodeMirror mode set to: ${mode}`); // For debugging
         });
 
         runBtn.addEventListener('click', () => {
-            // We can add a custom input box later if we want
-            const customInput = '""'; // Default empty input for now
             outputEl.textContent = 'Executing...';
             loader.classList.remove('hidden');
             runBtn.disabled = true;
             submitBtn.disabled = true;
-            socket.emit('execute_code', { room_id: roomId, input: customInput });
+            // UPDATED: Send the selected language
+            socket.emit('execute_code', { 
+                room_id: roomId, 
+                language: languageSelector.value,
+                input: "" // We can add a custom input box later
+            });
         });
 
-        // V-- NEW: Event listener for the Submit button --V
         submitBtn.addEventListener('click', () => {
             outputEl.textContent = 'Submitting for judging...';
             loader.classList.remove('hidden');
             runBtn.disabled = true;
             submitBtn.disabled = true;
-            socket.emit('submit_code', { room_id: roomId });
+            // UPDATED: Send the selected language
+            socket.emit('submit_code', { 
+                room_id: roomId,
+                language: languageSelector.value
+            });
         });
 
     </script>
