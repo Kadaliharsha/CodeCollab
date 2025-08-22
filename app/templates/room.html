@@ -6,8 +6,6 @@
     <title>CodeCollab Room</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-    
-    <!-- Import CodeMirror for the editor -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/dracula.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
@@ -16,60 +14,67 @@
 
     <style>
         body { font-family: 'Inter', sans-serif; }
-        .CodeMirror {
-            height: 100%;
-            font-size: 16px;
-        }
+        .CodeMirror { height: 100%; font-size: 16px; }
         .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db;
+            border-radius: 50%; width: 24px; height: 24px;
             animation: spin 1s linear infinite;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .problem-item.suggested { background-color: #4f46e5; }
     </style>
 </head>
 <body class="bg-gray-900 text-white flex flex-col items-center justify-center h-screen p-4">
 
     <div class="w-full max-w-7xl h-full flex flex-col bg-gray-800 rounded-lg shadow-xl p-6">
-        <div class="mb-4">
-            <h1 class="text-2xl font-bold">CodeCollab Room</h1>
-            <p class="text-gray-400">Room ID: <span id="roomIdDisplay" class="font-mono bg-gray-700 px-2 py-1 rounded"></span></p>
-            <p id="status" class="text-green-400">Connecting...</p>
+        <div class="mb-4 flex justify-between items-center">
+                <h1 class="text-2xl font-bold">CodeCollab Room</h1>
+                <p class="text-gray-400">Room ID: <span id="roomIdDisplay" class="font-mono bg-gray-700 px-2 py-1 rounded"></span></p>
+                <p id="status" class="text-green-400">Connecting...</p>
+            </div>
+            <button id="backToLobbyBtn" class="hidden bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Back to Lobby</button>
         </div>
-        
-        <div class="flex-grow grid grid-cols-1 md:grid-cols-12 gap-4 h-[calc(100%-100px)]">
-            <!-- Problem Panel (Left) -->
-            <div class="md:col-span-4 h-full flex flex-col bg-gray-900 p-4 rounded-md">
-                <h2 id="problemTitle" class="text-xl font-bold mb-2">Open Sandbox</h2>
-                <div id="problemDescription" class="text-gray-300 overflow-y-auto">Feel free to write and test any code.</div>
+        <!-- Main Content Area -->
+        <div id="contentArea" class="flex-grow h-[calc(100%-100px)]">
+            
+            <!-- Lobby View (Visible by default) -->
+            <div id="lobbyView" class="flex flex-col items-center justify-center h-full">
+                <h2 class="text-3xl font-bold mb-4">Welcome to the Lobby!</h2>
+                <p class="text-gray-400 mb-8">Choose a problem to start coding together.</p>
+                <div id="problemList" class="w-full max-w-md bg-gray-900 p-4 rounded-md overflow-y-auto">
+                    <!-- Problems will be loaded here by JavaScript -->
+                </div>
             </div>
 
-            <!-- Editor & Output Panel (Right) -->
-            <div class="md:col-span-8 h-full flex flex-col gap-4">
-                <div class="h-3/5 flex flex-col">
-                    <div class="mb-2">
-                        <label for="languageSelector" class="text-sm font-medium text-gray-400 mr-2">Language:</label>
-                        <select id="languageSelector" class="bg-gray-700 text-white rounded-md px-2 py-1">
-                            <option value="python">Python</option>
-                            <option value="cpp">C++</option>
-                            <option value="java">Java</option>
-                        </select>
-                    </div>
-                    <textarea id="editor" class="w-full flex-grow"></textarea>
+            <!-- Coding View (Hidden by default) -->
+            <div id="codingView" class="hidden grid grid-cols-1 md:grid-cols-12 gap-4 h-full">
+                <!-- Problem Panel (Left) -->
+                <div class="md:col-span-4 h-full flex flex-col bg-gray-900 p-4 rounded-md">
+                    <h2 id="problemTitle" class="text-xl font-bold mb-2"></h2>
+                    <div id="problemDescription" class="text-gray-300 overflow-y-auto"></div>
                 </div>
-                <div class="h-2/5 flex flex-col">
-                    <div class="flex items-center mb-2 gap-4">
-                        <button id="runBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Run Code</button>
-                        <button id="submitBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Submit Code</button>
-                        <div id="loader" class="loader ml-4 hidden"></div>
+
+                <!-- Editor & Output Panel (Right) -->
+                <div class="md:col-span-8 h-full flex flex-col gap-4">
+                    <div class="h-3/5 flex flex-col">
+                        <div class="mb-2">
+                            <label for="languageSelector" class="text-sm font-medium text-gray-400 mr-2">Language:</label>
+                            <select id="languageSelector" class="bg-gray-700 text-white rounded-md px-2 py-1">
+                               <option value="python">Python</option>
+                               <option value="cpp">C++</option>
+                               <option value="java">Java</option>
+                            </select>
+                        </div>
+                        <textarea id="editor" class="w-full flex-grow"></textarea>
                     </div>
-                    <pre id="output" class="w-full flex-grow bg-black text-white font-mono p-4 rounded-md border border-gray-700 overflow-auto whitespace-pre-wrap"></pre>
+                    <div class="h-2/5 flex flex-col">
+                        <div class="flex items-center mb-2 gap-4">
+                            <button id="runBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Run Code</button>
+                            <button id="submitBtn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Submit Code</button>
+                            <div id="loader" class="loader ml-4 hidden"></div>
+                        </div>
+                        <pre id="output" class="w-full flex-grow bg-black text-white font-mono p-4 rounded-md border border-gray-700 overflow-auto whitespace-pre-wrap"></pre>
+                    </div>
                 </div>
             </div>
         </div>
@@ -77,73 +82,106 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const pathSegments = window.location.pathname.split('/');
-            const rawRoomId = pathSegments.pop() || pathSegments.pop();
-            const roomId = rawRoomId.substring(0, 8);
-
+            const roomId = window.location.pathname.split('/').pop().substring(0, 8);
             document.getElementById('roomIdDisplay').textContent = roomId;
             const username = prompt("Please enter your username:", "Guest");
-            const socket = io("http://127.0.0.1:5001");
-
-            const editorEl = document.getElementById('editor');
+            
+            const lobbyView = document.getElementById('lobbyView');
+            const codingView = document.getElementById('codingView');
+            const problemListEl = document.getElementById('problemList');
             const statusEl = document.getElementById('status');
+            const problemTitleEl = document.getElementById('problemTitle');
+            const problemDescriptionEl = document.getElementById('problemDescription');
+            const languageSelector = document.getElementById('languageSelector');
             const runBtn = document.getElementById('runBtn');
             const submitBtn = document.getElementById('submitBtn');
             const outputEl = document.getElementById('output');
             const loader = document.getElementById('loader');
-            const problemTitleEl = document.getElementById('problemTitle');
-            const problemDescriptionEl = document.getElementById('problemDescription');
-            const languageSelector = document.getElementById('languageSelector');
+            const backToLobbyBtn = document.getElementById('backToLobbyBtn');
 
-            const editor = CodeMirror.fromTextArea(editorEl, {
+            const socket = io("http://127.0.0.1:5001");
+
+            const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
                 lineNumbers: true,
                 mode: "python",
                 theme: "dracula",
                 indentUnit: 4,
             });
 
-            // --- Helper Function to update editor mode ---
             function updateEditorMode(lang) {
                 let mode = "python";
                 if (lang === 'cpp') mode = "text/x-c++src";
                 if (lang === 'java') mode = "text/x-java";
                 editor.setOption("mode", mode);
-                console.log(`CodeMirror mode set to: ${mode}`);
             }
 
-            // --- WebSocket Event Listeners ---
+            function switchToLobbyView() {
+                codingView.style.display = 'none';
+                backToLobbyBtn.classList.add('hidden');
+                lobbyView.style.display = 'flex';
+                fetchProblems();
+            }
+
+            function switchToCodingView(problemData, roomData) {
+                problemTitleEl.textContent = problemData.title;
+                problemDescriptionEl.textContent = problemData.description;
+                editor.setValue(roomData.code_content || problemData.template_code);
+                languageSelector.value = roomData.language;
+                updateEditorMode(roomData.language);
+
+                lobbyView.style.display = 'none';
+                codingView.style.display = 'grid';
+                backToLobbyBtn.classList.remove('hidden');
+                editor.refresh();
+            }
+
+            function fetchProblems() {
+                fetch(`http://127.0.0.1:5001/api/problems`)
+                    .then(res => res.json())
+                    .then(problems => {
+                        problemListEl.innerHTML = '';
+                        problems.forEach(p => {
+                            const item = document.createElement('div');
+                            item.className = 'problem-item p-2 rounded-md hover:bg-indigo-600 cursor-pointer';
+                            item.textContent = p.title;
+                            item.dataset.problemId = p.id;
+                            problemListEl.appendChild(item);
+                        });
+                    });
+            }
+
             socket.on('connect', () => {
                 statusEl.textContent = 'Connected!';
-                statusEl.className = 'text-green-400';
                 socket.emit('join_room', { room_id: roomId, username: username });
 
                 fetch(`http://127.0.0.1:5001/api/rooms/${roomId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        // Set the initial language from the database
-                        if (data.language) {
-                            languageSelector.value = data.language;
-                            updateEditorMode(data.language);
-                        }
-                        if (data.problem && data.problem.title) {
-                            problemTitleEl.textContent = data.problem.title;
-                            problemDescriptionEl.textContent = data.problem.description;
-                            editor.setValue(data.code_content || data.problem.template_code);
+                    .then(res => res.json())
+                    .then(roomData => {
+                        if (roomData.problem && roomData.problem.title) {
+                            switchToCodingView(roomData.problem, roomData);
                         } else {
-                            editor.setValue(data.code_content || "print('Hello, world!')");
+                            switchToLobbyView();
                         }
                     });
             });
+            
+            socket.on('problem_loaded', (data) => {
+                if (data.problem && data.problem.title) {
+                    switchToCodingView(data.problem, data);
+                }
+            });
+
+            socket.on('lobby_activated', () => {
+                switchToLobbyView();
+            })
 
             socket.on('code_updated', (data) => {
                 const cursorPos = editor.getCursor();
                 editor.setValue(data.code);
                 editor.setCursor(cursorPos);
             });
-            
-            // --- NEW: Listen for language updates from other users ---
+
             socket.on('language_updated', (data) => {
-                console.log('Received language update from another user.');
                 languageSelector.value = data.language;
                 updateEditorMode(data.language);
             });
@@ -173,18 +211,26 @@
                 submitBtn.disabled = false;
             });
 
-            // --- Event Listeners ---
+            problemListEl.addEventListener('click', (e) => {
+                if (e.target.classList.contains('problem-item')) {
+                    const problemId = e.target.dataset.problemId;
+                    socket.emit('load_problem', { room_id: roomId, problem_id: problemId });
+                }
+            });
+
+            backToLobbyBtn.addEventListener('click', () => {
+                socket.emit('leave_problem', { room_id: roomId });
+            });
+
             editor.on('change', (instance, changeObj) => {
                 if (changeObj.origin !== 'setValue') {
                     socket.emit('code_change', { room_id: roomId, code: instance.getValue() });
                 }
             });
 
-            // UPDATED: The language selector now emits an event
             languageSelector.addEventListener('change', (event) => {
                 const newLanguage = event.target.value;
                 updateEditorMode(newLanguage);
-                // Tell the server about the change
                 socket.emit('language_change', {
                     room_id: roomId,
                     language: newLanguage
