@@ -1,53 +1,62 @@
 import docker
+import base64
 
 def run_code(code, language, test_input=""):
     """
-    Runs a string of code in a specific language in a secure Docker container.
+    Runs a string of code in a specific language in a secure Docker container
+    using Base64 encoding to safely handle all characters.
     """
     client = docker.from_env()
     
     image_name = ""
     command = ""
     
+    # Encode the user's code into a Base64 string
+    encoded_code = base64.b64encode(code.encode('utf-8')).decode('utf-8')
+    
     if language == 'python':
         image_name = "python:3.9-slim"
-        # Command to execute the code string directly
-        command = f"python -c \"{code.replace('\"', '\\\"')}\""
+        # Decode the Base64 string and pipe it into the python interpreter
+        command = f"/bin/sh -c \"echo {encoded_code} | base64 -d | python\""
     elif language == 'cpp':
         image_name = "gcc:latest"
-        # Using triple quotes ''' to simplify the command string and avoid syntax errors
-        # This correctly handles escaping single quotes in the user's code for the shell.
-        safe_code = code.replace("'", "'\\''")
-        command = f'''/bin/sh -c "echo '{safe_code}' > main.cpp && g++ -o main main.cpp && ./main"'''
+        # Decode to a file, compile, then run
+        command = f"/bin/sh -c \"echo {encoded_code} | base64 -d > main.cpp && g++ -o main main.cpp && ./main\""
     elif language == 'java':
-        image_name = "openjdk:11-jre-slim"
-        # Using triple quotes ''' here as well for the same reason.
-        safe_code = code.replace("'", "'\\''")
-        command = f'''/bin/sh -c "echo '{safe_code}' > Main.java && javac Main.java && java Main"'''
+        image_name = "openjdk:11-jdk-slim"
+        # Decode to a file, compile, then run
+        command = f"/bin/sh -c \"echo {encoded_code} | base64 -d > Main.java && javac Main.java && java Main\""
     else:
         return "", "Unsupported language"
 
-    container = None
     try:
-        # Use client.containers.run() which is simpler for one-off tasks
-        container_output = client.containers.run(
+        container = client.containers.run(
             image_name,
             command,
-            detach=False, # Wait for the container to finish
-            remove=True,  # Automatically remove it after it's done
+            detach=True,
             network_disabled=True,
+            stdin_open=True,
         )
-        # The output is returned directly as bytes
-        output = container_output.decode('utf-8').strip()
-        return output, "" # Return output and an empty error string
+        
+        # Send input to the container if provided
+        if test_input:
+            sock = container.attach_socket(params={'stdin': 1, 'stream': 1})
+            sock._sock.sendall(test_input.encode('utf-8'))
+            sock._sock.close()
 
-    except docker.errors.ContainerError as e:
-        # This error happens if the code inside the container fails (e.g., runtime error)
-        # The error message is in the container's output
-        error_message = e.stderr.decode('utf-8').strip()
-        return "", error_message
+        # Wait for the container to finish, with a generous timeout for image pulls
+        result = container.wait(timeout=20)
+        
+        output = container.logs(stdout=True, stderr=False).decode('utf-8').strip()
+        error = container.logs(stdout=False, stderr=True).decode('utf-8').strip()
+        
+        # Check the exit code from the container
+        if result['StatusCode'] != 0 and not output:
+             return "", error or "An unknown error occurred."
+
+        return output, error
+
     except docker.errors.ImageNotFound:
-        # If the image isn't downloaded yet, instruct the user
         try:
             print(f"Pulling image: {image_name}. This may take a moment...")
             client.images.pull(image_name)
@@ -56,6 +65,10 @@ def run_code(code, language, test_input=""):
         except Exception as pull_error:
             return "", f"Failed to pull Docker image: {pull_error}"
     except Exception as e:
-        # Catch any other unexpected errors
         return "", str(e)
-
+    finally:
+        if 'container' in locals() and container:
+            try:
+                container.remove(force=True)
+            except docker.errors.NotFound:
+                pass

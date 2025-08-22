@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     
-    <!-- NEW: Import CodeMirror for the editor -->
+    <!-- Import CodeMirror for the editor -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/dracula.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
@@ -16,7 +16,6 @@
 
     <style>
         body { font-family: 'Inter', sans-serif; }
-        /* Make CodeMirror editor fill its container */
         .CodeMirror {
             height: 100%;
             font-size: 16px;
@@ -54,7 +53,6 @@
             <!-- Editor & Output Panel (Right) -->
             <div class="md:col-span-8 h-full flex flex-col gap-4">
                 <div class="h-3/5 flex flex-col">
-                    <!-- NEW: Language Selector -->
                     <div class="mb-2">
                         <label for="languageSelector" class="text-sm font-medium text-gray-400 mr-2">Language:</label>
                         <select id="languageSelector" class="bg-gray-700 text-white rounded-md px-2 py-1">
@@ -63,7 +61,6 @@
                             <option value="java">Java</option>
                         </select>
                     </div>
-                    <!-- UPDATED: This textarea will be replaced by CodeMirror -->
                     <textarea id="editor" class="w-full flex-grow"></textarea>
                 </div>
                 <div class="h-2/5 flex flex-col">
@@ -79,130 +76,144 @@
     </div>
 
     <script>
-        // FIXED: Ensure we only take the first 8 characters for the room ID
-        const pathSegments = window.location.pathname.split('/');
-        const rawRoomId = pathSegments.pop() || pathSegments.pop(); // Handles trailing slashes
-        const roomId = rawRoomId.substring(0, 8);
+        document.addEventListener('DOMContentLoaded', function() {
+            const pathSegments = window.location.pathname.split('/');
+            const rawRoomId = pathSegments.pop() || pathSegments.pop();
+            const roomId = rawRoomId.substring(0, 8);
 
-        document.getElementById('roomIdDisplay').textContent = roomId;
-        const username = prompt("Please enter your username:", "Guest");
-        const socket = io("http://127.0.0.1:5001");
+            document.getElementById('roomIdDisplay').textContent = roomId;
+            const username = prompt("Please enter your username:", "Guest");
+            const socket = io("http://127.0.0.1:5001");
 
-        // DOM Elements
-        const statusEl = document.getElementById('status');
-        const runBtn = document.getElementById('runBtn');
-        const submitBtn = document.getElementById('submitBtn');
-        const outputEl = document.getElementById('output');
-        const loader = document.getElementById('loader');
-        const problemTitleEl = document.getElementById('problemTitle');
-        const problemDescriptionEl = document.getElementById('problemDescription');
-        const languageSelector = document.getElementById('languageSelector');
+            const editorEl = document.getElementById('editor');
+            const statusEl = document.getElementById('status');
+            const runBtn = document.getElementById('runBtn');
+            const submitBtn = document.getElementById('submitBtn');
+            const outputEl = document.getElementById('output');
+            const loader = document.getElementById('loader');
+            const problemTitleEl = document.getElementById('problemTitle');
+            const problemDescriptionEl = document.getElementById('problemDescription');
+            const languageSelector = document.getElementById('languageSelector');
 
-        // --- NEW: Initialize CodeMirror Editor ---
-        const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
-            lineNumbers: true,
-            mode: "python", // Default mode
-            theme: "dracula",
-            indentUnit: 4,
-        });
+            const editor = CodeMirror.fromTextArea(editorEl, {
+                lineNumbers: true,
+                mode: "python",
+                theme: "dracula",
+                indentUnit: 4,
+            });
 
-        // --- WebSocket Event Listeners ---
-        socket.on('connect', () => {
-            statusEl.textContent = 'Connected!';
-            statusEl.className = 'text-green-400';
-            socket.emit('join_room', { room_id: roomId, username: username });
+            // --- Helper Function to update editor mode ---
+            function updateEditorMode(lang) {
+                let mode = "python";
+                if (lang === 'cpp') mode = "text/x-c++src";
+                if (lang === 'java') mode = "text/x-java";
+                editor.setOption("mode", mode);
+                console.log(`CodeMirror mode set to: ${mode}`);
+            }
 
-            fetch(`http://127.0.0.1:5001/api/rooms/${roomId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.problem && data.problem.title) {
-                        problemTitleEl.textContent = data.problem.title;
-                        problemDescriptionEl.textContent = data.problem.description;
-                        editor.setValue(data.code_content || data.problem.template_code);
-                    } else {
-                        editor.setValue(data.code_content || "print('Hello, world!')");
-                    }
+            // --- WebSocket Event Listeners ---
+            socket.on('connect', () => {
+                statusEl.textContent = 'Connected!';
+                statusEl.className = 'text-green-400';
+                socket.emit('join_room', { room_id: roomId, username: username });
+
+                fetch(`http://127.0.0.1:5001/api/rooms/${roomId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Set the initial language from the database
+                        if (data.language) {
+                            languageSelector.value = data.language;
+                            updateEditorMode(data.language);
+                        }
+                        if (data.problem && data.problem.title) {
+                            problemTitleEl.textContent = data.problem.title;
+                            problemDescriptionEl.textContent = data.problem.description;
+                            editor.setValue(data.code_content || data.problem.template_code);
+                        } else {
+                            editor.setValue(data.code_content || "print('Hello, world!')");
+                        }
+                    });
+            });
+
+            socket.on('code_updated', (data) => {
+                const cursorPos = editor.getCursor();
+                editor.setValue(data.code);
+                editor.setCursor(cursorPos);
+            });
+            
+            // --- NEW: Listen for language updates from other users ---
+            socket.on('language_updated', (data) => {
+                console.log('Received language update from another user.');
+                languageSelector.value = data.language;
+                updateEditorMode(data.language);
+            });
+
+            socket.on('execution_result', (result) => {
+                if (result.error) {
+                    outputEl.textContent = result.error;
+                    outputEl.style.color = '#f87171';
+                } else {
+                    outputEl.textContent = result.output;
+                    outputEl.style.color = 'white';
+                }
+                loader.classList.add('hidden');
+                runBtn.disabled = false;
+                submitBtn.disabled = false;
+            });
+
+            socket.on('submit_result', (result) => {
+                outputEl.textContent = `Verdict: ${result.verdict}\n\n${result.details}`;
+                if (result.verdict === 'Accepted') {
+                    outputEl.style.color = '#4ade80';
+                } else {
+                    outputEl.style.color = '#f87171';
+                }
+                loader.classList.add('hidden');
+                runBtn.disabled = false;
+                submitBtn.disabled = false;
+            });
+
+            // --- Event Listeners ---
+            editor.on('change', (instance, changeObj) => {
+                if (changeObj.origin !== 'setValue') {
+                    socket.emit('code_change', { room_id: roomId, code: instance.getValue() });
+                }
+            });
+
+            // UPDATED: The language selector now emits an event
+            languageSelector.addEventListener('change', (event) => {
+                const newLanguage = event.target.value;
+                updateEditorMode(newLanguage);
+                // Tell the server about the change
+                socket.emit('language_change', {
+                    room_id: roomId,
+                    language: newLanguage
                 });
-        });
+            });
 
-        socket.on('disconnect', () => { statusEl.textContent = 'Disconnected!'; statusEl.className = 'text-red-400'; });
-        socket.on('user_joined', (data) => { console.log(`${data.username} has joined the room.`); });
+            runBtn.addEventListener('click', () => {
+                outputEl.textContent = 'Executing...';
+                loader.classList.remove('hidden');
+                runBtn.disabled = true;
+                submitBtn.disabled = true;
+                socket.emit('execute_code', { 
+                    room_id: roomId, 
+                    language: languageSelector.value,
+                    input: "" 
+                });
+            });
 
-        socket.on('code_updated', (data) => {
-            const cursorPos = editor.getCursor();
-            editor.setValue(data.code);
-            editor.setCursor(cursorPos);
-        });
-
-        socket.on('execution_result', (result) => {
-            if (result.error) {
-                outputEl.textContent = result.error;
-                outputEl.style.color = '#f87171';
-            } else {
-                outputEl.textContent = result.output;
-                outputEl.style.color = 'white';
-            }
-            loader.classList.add('hidden');
-            runBtn.disabled = false;
-            submitBtn.disabled = false;
-        });
-        
-        socket.on('submit_result', (result) => {
-            outputEl.textContent = `Verdict: ${result.verdict}\n\n${result.details}`;
-            if (result.verdict === 'Accepted') {
-                outputEl.style.color = '#4ade80';
-            } else {
-                outputEl.style.color = '#f87171';
-            }
-            loader.classList.add('hidden');
-            runBtn.disabled = false;
-            submitBtn.disabled = false;
-        });
-
-        // --- Event Listeners ---
-        editor.on('change', (instance, changeObj) => {
-            // Prevent broadcasting changes that come from other users
-            if (changeObj.origin !== 'setValue') {
-                socket.emit('code_change', { room_id: roomId, code: instance.getValue() });
-            }
-        });
-
-        // NEW: Change editor mode when language changes
-        languageSelector.addEventListener('change', (event) => {
-            const lang = event.target.value;
-            console.log(`Language selector changed to: ${lang}`); // For debugging
-            let mode = "python";
-            if (lang === 'cpp') mode = "text/x-c++src";
-            if (lang === 'java') mode = "text/x-java";
-            editor.setOption("mode", mode);
-            console.log(`CodeMirror mode set to: ${mode}`); // For debugging
-        });
-
-        runBtn.addEventListener('click', () => {
-            outputEl.textContent = 'Executing...';
-            loader.classList.remove('hidden');
-            runBtn.disabled = true;
-            submitBtn.disabled = true;
-            // UPDATED: Send the selected language
-            socket.emit('execute_code', { 
-                room_id: roomId, 
-                language: languageSelector.value,
-                input: "" // We can add a custom input box later
+            submitBtn.addEventListener('click', () => {
+                outputEl.textContent = 'Submitting for judging...';
+                loader.classList.remove('hidden');
+                runBtn.disabled = true;
+                submitBtn.disabled = true;
+                socket.emit('submit_code', { 
+                    room_id: roomId,
+                    language: languageSelector.value
+                });
             });
         });
-
-        submitBtn.addEventListener('click', () => {
-            outputEl.textContent = 'Submitting for judging...';
-            loader.classList.remove('hidden');
-            runBtn.disabled = true;
-            submitBtn.disabled = true;
-            // UPDATED: Send the selected language
-            socket.emit('submit_code', { 
-                room_id: roomId,
-                language: languageSelector.value
-            });
-        });
-
     </script>
 </body>
 </html>
