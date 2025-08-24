@@ -9,6 +9,7 @@ from app.code_executor import run_code
 # Create a Blueprint for API routes
 bp = Blueprint('api', __name__, url_prefix='/api')
 
+# ... (Authentication and other routes remain the same) ...
 def generate_room_id():
     return str(uuid.uuid4().hex)[:8]
 
@@ -90,13 +91,26 @@ def handle_join_room(data):
 @socketio.on('code_change')
 def handle_code_change(data):
     room_id = data.get('room_id')
-    new_code = data.get('code')
+    new_code = data.get('code_content')
+    print(f"[code_change] Received for room_id: {room_id}, code_content: {new_code[:30]}...")
     room = Room.query.get(room_id)
     if room:
+        print(f"[code_change] Room found: {room_id}, updating code.")
         room.code_content = new_code
         db.session.commit()
-    emit('code_updated', {'code': new_code}, to=room_id, include_self=False)
+        emit('code_update', {'code_content': new_code}, to=room_id, include_self=False)
+    else:
+        print(f"[code_change] Room NOT found: {room_id}")
 
+@socketio.on('leave_room')
+def handle_leave_room(data):
+    room_id = data.get('room_id')
+    room = Room.query.get(room_id)
+    if room:
+        room.problem_id = None
+        db.session.commit()
+        emit('lobby_activated', {}, to=room_id)
+        
 @socketio.on('language_change')
 def handle_language_change(data):
     room_id = data.get('room_id')
@@ -107,16 +121,23 @@ def handle_language_change(data):
         db.session.commit()
     emit('language_updated', {'language': new_language}, to=room_id, include_self=False)
 
+# --- NEW: WebSocket Handler for Loading a Problem ---
 @socketio.on('load_problem')
 def handle_load_problem(data):
+    """Handles a request to load a problem into a room."""
     room_id = data.get('room_id')
     problem_id = data.get('problem_id')
+
     room = Room.query.get(room_id)
     problem = Problem.query.get(problem_id)
+
     if room and problem:
+        # Link the problem to the room and save to DB
         room.problem_id = problem.id
-        room.code_content = problem.template_code
+        room.code_content = problem.template_code # Reset code to template
         db.session.commit()
+
+        # Fetch the full room data to send back
         problem_details = {
             "title": problem.title,
             "description": problem.description,
@@ -128,26 +149,23 @@ def handle_load_problem(data):
             "language": room.language,
             "problem": problem_details
         }
-        emit('problem_loaded', room_data, to=room_id)
         
-@socketio.on('leave_problem')
-def handle_leave_problem(data):
-    """Handles a request to return to the lobby."""
-    room_id = data.get('room_id')
-    room = Room.query.get(room_id)
-    if room:
-        room.problem_id = None
-        db.session.commit()
-        emit('lobby_activated', {}, to=room_id)
+        # Broadcast to everyone in the room that the problem is loaded
+        emit('problem_loaded', room_data, to=room_id)
 
 @socketio.on('execute_code')
 def handle_execute_code(data):
+    """Handles a request to execute code (Run button)."""
     room_id = data.get('room_id')
     language = data.get('language', 'python')
+    # FIXED: Get the code directly from the data sent by the frontend
+    code_to_run = data.get('code', '') 
+    
+    # We still get the room to ensure it exists, but we don't need its saved code
     room = Room.query.get(room_id)
     if not room:
-        return
-    code_to_run = room.code_content
+        return 
+
     # Call run_code without test_input_args for a simple "Run"
     output, error = run_code(code_to_run, language)
     result = {"output": output, "error": error}
@@ -155,17 +173,25 @@ def handle_execute_code(data):
 
 @socketio.on('submit_code')
 def handle_submit_code(data):
+    """
+    Handles a code submission, runs it against all test cases,
+    and broadcasts the final verdict.
+    """
     room_id = data.get('room_id')
     language = data.get('language', 'python')
+    # FIXED: Get the code directly from the data sent by the frontend
+    user_code = data.get('code', '')
+
     room = Room.query.get(room_id)
     if not room or not room.problem_id:
         emit('submit_result', {'verdict': 'Error', 'details': 'No problem associated with this room.'}, to=room_id)
         return
+
     problem = Problem.query.get(room.problem_id)
     if not problem or not problem.test_cases:
         emit('submit_result', {'verdict': 'Error', 'details': 'Could not find test cases for this problem.'}, to=room_id)
         return
-    user_code = room.code_content
+
     passed_all_tests = True
     for i, test_case in enumerate(problem.test_cases):
         # Pass the test case input as the third argument
