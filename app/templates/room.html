@@ -175,9 +175,9 @@
                 switchToLobbyView();
             })
 
-            socket.on('code_updated', (data) => {
+            socket.on('code_update', (data) => {
                 const cursorPos = editor.getCursor();
-                editor.setValue(data.code);
+                editor.setValue(data.code_content);
                 editor.setCursor(cursorPos);
             });
 
@@ -224,7 +224,7 @@
 
             editor.on('change', (instance, changeObj) => {
                 if (changeObj.origin !== 'setValue') {
-                    socket.emit('code_change', { room_id: roomId, code: instance.getValue() });
+                    socket.emit('code_change', { room_id: roomId, code_content: instance.getValue() });
                 }
             });
 

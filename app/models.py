@@ -15,7 +15,7 @@ class User(db.Model):
 class Room(db.Model):
     id = db.Column(db.String(10), primary_key=True)
     code_content = db.Column(db.Text, nullable=True, default="# Welcome to your CodeCollab room!\nprint('Hello, friend!')")
-    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     problem_id = db.Column(db.Integer, db.ForeignKey('problem.id'), nullable=True)
     
     # --- NEW: Add a column to store the current language ---
@@ -26,7 +26,7 @@ class Problem(db.Model):
     """Represents a coding problem."""
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text, nullable=False)
+    description = db.Column(db.Text, nullable=False) 
     template_code = db.Column(db.Text, nullable=True)
     test_cases = db.relationship('TestCase', backref='problem', lazy=True, cascade="all, delete-orphan")
 
