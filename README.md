@@ -32,15 +32,6 @@ CodeCollab is an interactive web application that empowers multiple users to col
 
 ---
 
-## 🎯 Why Recruiters and Hiring Managers Love CodeCollab
-
-- **Showcases Backend & Frontend Skills:** Demonstrates your ability to build scalable, real-time web apps using modern Python and JavaScript technologies.
-- **Code Quality & Architecture:** Organized with clear separation of models, routes, templates, and configuration.
-- **Testable & Extensible:** Seeded test cases and modular execution logic for easy expansion.
-- **Interview-Ready:** Perfect for technical interviews, pair programming, and classroom use.
-
----
-
 ## 📝 Getting Started
 
 1. **Clone the repo:**  
@@ -85,13 +76,6 @@ CodeCollab is an interactive web application that empowers multiple users to col
 ## ❤️ Contributing
 
 Open to issues, suggestions, and pull requests — let’s make collaborative coding better together!
-
----
-
-## 🔗 Links
-
-- [Live Demo (if available)](https://github.com/Kadaliharsha/CodeCollab)
-- [See All My Projects](https://github.com/Kadaliharsha)
 
 ---
 
