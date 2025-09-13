@@ -1,10 +1,12 @@
 import uuid
 from flask import Blueprint, request, jsonify
 from app import db, socketio
-from app.models import User, Room, Problem, TestCase
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from app.models import User, Room, Problem, TestCase, SessionEvent
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, decode_token
 from flask_socketio import join_room, leave_room, emit
 from app.code_executor import run_code
+from datetime import timedelta
+
 
 # Create a Blueprint for API routes
 bp = Blueprint('api', __name__, url_prefix='/api')
@@ -12,6 +14,14 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 # Global dictionary to track active users in rooms
 # Format: {room_id: [{'username': 'user1', 'socket_id': 'sid1'}, ...]}
 active_users = {}
+
+def record_event(room_id, event_type, payload=None):
+    event = SessionEvent()
+    event.room_id = str(room_id)
+    event.event_type = event_type
+    event.payload = payload or {}
+    db.session.add(event)
+    db.session.commit()
 
 # ... (Authentication and other routes remain the same) ...
 def generate_room_id():
@@ -44,7 +54,49 @@ def login_user():
         return jsonify(access_token=access_token), 200
     else:
         return jsonify({"error": "Invalid credentials"}), 401
+    
+@bp.route('/auth/forgot', methods=['POST'])
+def forgot_password():
+    data = request.get_json() or {}
+    username = data.get('username')
+    if not username:
+        return jsonify({"error": "username is required"}), 400
 
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"message": "If the user exists, a reset link has been sent "}), 200
+    
+    reset_token = create_access_token(identity=str(user.id),
+                                      additional_claims={"purpose": "password_reset"},
+                                      expires_delta=timedelta(minutes=15))
+    
+    return jsonify({
+        "message": "Reset link generated.",
+        "reset_token": reset_token
+    }), 200
+
+@bp.route('/auth/reset', methods=['POST'])
+def reset_password():
+    data = request.get_json() or {}
+    token = data.get('token')
+    new_password = data.get('new_password')
+    if not token or not new_password:
+        return jsonify({"error": "token and new_password are required"}), 400
+    
+    try:
+        decoded = decode_token(token)
+        if decoded.get("claims", {}).get("purpose") != "password_reset":
+            return jsonify({"error": "Invalid token type"}), 400
+        user_id = decoded.get("sub")
+        user = User.query.get(int(user_id)) if user_id else None
+        if not user:
+            return jsonify({"error": "Invalid token"}), 400
+        user.set_password(new_password)
+        db.session.commit()
+        return jsonify({"message": "Password has been reset successfully."}), 200
+    except Exception:
+        return jsonify({"error": "Invalid or expired token"}), 400
+    
 @bp.route('/rooms', methods=['POST'])
 @jwt_required()
 def create_room():
@@ -55,6 +107,7 @@ def create_room():
     new_room.created_by = current_user_id
     db.session.add(new_room)
     db.session.commit()
+    record_event(room_id, "create_room", {"created_by": current_user_id})
     return jsonify({"message": "Room created", "room_id": room_id}), 201
 
 @bp.route('/rooms/<string:room_id>', methods=['GET'])
@@ -99,6 +152,44 @@ def test_socket():
     
     return jsonify({"status": "test message sent", "room_id": room_id}), 200
 
+@bp.route('/sessions/<string:room_id>/timeline', methods=['GET'])
+def get_session_timeline(room_id):
+    events = db.session.query(SessionEvent).filter_by(room_id=room_id).order_by(SessionEvent.created_at).all()
+    
+    timeline = []
+    for event in events:
+        timeline.append({
+            'id': event.id,
+            'event_type': event.event_type,
+            'payload': event.payload,
+            'created_at': event.created_at.isoformat() if event.created_at else None
+        })
+        
+    return jsonify({
+        'room_id': room_id,
+        'total_events': len(timeline),
+        'timeline': timeline
+    }), 200
+    
+@bp.route('/sessions/<room_id>/summary', methods=["GET"])
+def get_session_summary(room_id):
+    events = db.session.query(SessionEvent).filter_by(room_id=room_id).all()
+    
+    event_counts = {}
+    for event in events:
+        event_counts[event.event_type] = event_counts.get(event.event_type, 0) + 1
+        
+    first_event = db.session.query(SessionEvent).filter_by(room_id=room_id).order_by(SessionEvent.created_at).first()
+    last_event = db.session.query(SessionEvent).filter_by(room_id=room_id).order_by(SessionEvent.created_at.desc()).first()
+    
+    return jsonify({
+        'room_id': room_id,
+        'total_events': len(events),
+        'event_counts': event_counts,
+        'session_start': first_event.created_at.isoformat() if first_event else None,
+        'session_end': last_event.created_at.isoformat() if last_event else None,
+        'duration_minutes': None
+    }), 200
 
 ## --- WebSocket Event Handlers ---
 @socketio.on('connect')
@@ -132,6 +223,7 @@ def handle_join_room(data):
     print(f"[join_room] Before joining: {username} is in rooms: {before_rooms}")
     
     join_room(room_id)
+    record_event(room_id, "join", {"username": username})
     print(f"User {username} joined socket room {room_id}")
     
     # DEBUG: Check current rooms after joining
@@ -189,6 +281,7 @@ def handle_code_change(data):
         print(f"[code_change] Room found: {room_id}, updating code.")
         room.code_content = new_code
         db.session.commit()
+        record_event(room_id, "code_change", {"message_id": message_id, "length": len(new_code or "")})
         # Broadcast to ALL users in the room (including sender for perfect sync)
         print(f"[code_change] Emitting code_update to room {room_id} with content: {new_code[:30]}...")
         emit('code_update', {'code_content': new_code, 'message_id': message_id}, to=room_id, include_self=False)
@@ -202,6 +295,7 @@ def handle_code_change(data):
             new_room.created_by = None
             new_room.code_content = new_code
             db.session.add(new_room)
+            record_event(room_id, "code_change", {"message_id": message_id, "length": len(new_code or "")})
             db.session.commit()
             print(f"[code_change] Created new room: {room_id}")
             # Broadcast to ALL users in the room
@@ -211,6 +305,7 @@ def handle_code_change(data):
         except Exception as e:
             print(f"[code_change] Error creating room: {e}")
             # Still broadcast the update even if room creation fails
+            record_event(room_id, "code_change", {"message_id": message_id, "length": len(new_code or "")})
             print(f"[code_change] Emitting code_update to room {room_id} (fallback) with content: {new_code[:30]}...")
             emit('code_update', {'code_content': new_code, 'message_id': message_id}, to=room_id, include_self=False)
             print(f"[code_change] Emit completed for room {room_id} (fallback)")
@@ -228,6 +323,7 @@ def handle_leave_room(data):
     if room_id in active_users:
         active_users[room_id] = [user for user in active_users[room_id] if user['username'] != username]
         print(f"Removed {username} from room {room_id}. Remaining users: {[u['username'] for u in active_users[room_id]]}")
+    record_event(room_id, "leave", {"username": username})
     
     # Emit user_left event to remaining users
     print(f"Emitting user_left event for {username} to room {room_id}")  # Debug log
@@ -248,6 +344,8 @@ def handle_language_change(data):
     if room:
         room.language = new_language
         db.session.commit()
+        record_event(room_id, "language_change", {"language": new_language})
+        
     emit('language_updated', {'language': new_language}, to=room_id, include_self=False)
 
 # --- NEW: WebSocket Handler for Loading a Problem ---
@@ -265,6 +363,7 @@ def handle_load_problem(data):
         room.problem_id = problem.id
         room.code_content = problem.template_code # Reset code to template
         db.session.commit()
+        record_event(room_id, "load_problem", {"problem_id": problem_id})
 
         # Fetch the full room data to send back
         problem_details = {
@@ -299,6 +398,7 @@ def handle_execute_code(data):
     output, error = run_code(code_to_run, language)
     result = {"output": output, "error": error}
     emit('execution_result', result, to=room_id)
+    record_event(room_id, "run", {"language": language, "has_error": bool(error)})
 
 @socketio.on('submit_code')
 def handle_submit_code(data):
@@ -340,4 +440,5 @@ def handle_submit_code(data):
     if passed_all_tests:
         verdict = "Accepted"
         details = f"Congratulations! You passed all {len(problem.test_cases)} test cases."
+        record_event(room_id, "submit", {"verdict": verdict})
         emit('submit_result', {'verdict': verdict, 'details': details}, to=room_id)

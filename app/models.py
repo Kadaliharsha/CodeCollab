@@ -1,5 +1,7 @@
 from app import db
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import JSON, func
+from sqlalchemy.sql import expression
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -17,10 +19,7 @@ class Room(db.Model):
     code_content = db.Column(db.Text, nullable=True, default="# Welcome to your CodeCollab room!\nprint('Hello, friend!')")
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     problem_id = db.Column(db.Integer, db.ForeignKey('problem.id'), nullable=True)
-    
-    # --- NEW: Add a column to store the current language ---
     language = db.Column(db.String(20), nullable=False, default='python')
-
 
 class Problem(db.Model):
     """Represents a coding problem."""
@@ -37,3 +36,10 @@ class TestCase(db.Model):
     expected_output = db.Column(db.Text, nullable=False)
     is_hidden = db.Column(db.Boolean, default=True, nullable=False)
     problem_id = db.Column(db.Integer, db.ForeignKey('problem.id'), nullable=False)
+
+class SessionEvent(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    room_id = db.Column(db.String(10), db.ForeignKey('room.id'), nullable=False, index=True)
+    event_type = db.Column(db.String(32), nullable=False)
+    payload = db.Column(JSON,nullable=False,default=dict)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=func.now())
